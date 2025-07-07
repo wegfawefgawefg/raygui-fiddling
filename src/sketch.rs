@@ -1,7 +1,11 @@
 use raylib::prelude::*;
+// Required for FFI calls
+use std::ffi::{CStr, CString};
+use std::os::raw::c_char;
 
 pub const FRAMES_PER_SECOND: u32 = 60;
 const CAMERA_SPEED: f32 = 400.0;
+const TEXT_BUFFER_CAPACITY: usize = 128;
 
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub enum Shape {
@@ -155,7 +159,6 @@ pub fn draw(state: &mut State, d: &mut RaylibDrawHandle) {
     } // End 2D mode
 
     // --- Screen-space GUI drawing ---
-    // We must iterate through the objects mutably to change their GUI state.
     for obj in &mut state.scene_objects {
         draw_gui_recursively(d, obj, &state.camera);
     }
@@ -165,13 +168,11 @@ pub fn draw(state: &mut State, d: &mut RaylibDrawHandle) {
 
 /// Recursively draws an object, its connection lines, and its children in world space.
 fn draw_object_recursively(d: &mut RaylibMode2D<RaylibDrawHandle>, obj: &SceneObject) {
-    // Draw lines to children first, so they appear underneath the shapes.
     for child in &obj.children {
         d.draw_line_v(obj.position, child.position, Color::GRAY);
         draw_object_recursively(d, child);
     }
 
-    // Draw the object's shape
     let size = 40.0;
     match obj.shape {
         Shape::Square => d.draw_rectangle_pro(
@@ -181,15 +182,23 @@ fn draw_object_recursively(d: &mut RaylibMode2D<RaylibDrawHandle>, obj: &SceneOb
             obj.color,
         ),
         Shape::Circle => d.draw_circle_v(obj.position, size / 2.0, obj.color),
-        Shape::Triangle => d.draw_triangle(
-            Vector2::new(obj.position.x, obj.position.y - size / 2.0),
-            Vector2::new(obj.position.x - size / 2.0, obj.position.y + size / 2.0),
-            Vector2::new(obj.position.x + size / 2.0, obj.position.y + size / 2.0),
-            obj.color,
-        ),
+        Shape::Triangle => {
+            let angle_rad = obj.current_rotation.to_radians();
+            let cos_a = angle_rad.cos();
+            let sin_a = angle_rad.sin();
+            let p1 = Vector2::new(0.0, -size / 2.0);
+            let p2 = Vector2::new(-size / 2.0, size / 2.0);
+            let p3 = Vector2::new(size / 2.0, size / 2.0);
+            let rp1 = Vector2::new(p1.x * cos_a - p1.y * sin_a, p1.x * sin_a + p1.y * cos_a)
+                + obj.position;
+            let rp2 = Vector2::new(p2.x * cos_a - p2.y * sin_a, p2.x * sin_a + p2.y * cos_a)
+                + obj.position;
+            let rp3 = Vector2::new(p3.x * cos_a - p3.y * sin_a, p3.x * sin_a + p3.y * cos_a)
+                + obj.position;
+            d.draw_triangle(rp1, rp2, rp3, obj.color);
+        }
     }
 
-    // Draw the text label
     let text_size = d
         .get_font_default()
         .measure_text(obj.text.as_str(), 20.0, 1.0);
@@ -203,39 +212,53 @@ fn draw_object_recursively(d: &mut RaylibMode2D<RaylibDrawHandle>, obj: &SceneOb
 }
 
 /// Manually calculates the screen position of a world coordinate point.
-/// This is the forward camera transformation.
 fn world_to_screen(world_pos: Vector2, camera: &Camera2D) -> Vector2 {
     (world_pos - camera.target) * camera.zoom + camera.offset
 }
 
 /// Recursively draws the GUI for an object and its children in screen space.
 fn draw_gui_recursively(d: &mut RaylibDrawHandle, obj: &mut SceneObject, camera: &Camera2D) {
-    // CORRECTED: Manually calculate the screen position using our helper function.
     let screen_pos = world_to_screen(obj.position, camera);
 
-    // Draw the settings button for this object
     let button_rect = Rectangle::new(screen_pos.x + 30.0, screen_pos.y, 30.0, 20.0);
     if d.gui_button(button_rect, "[S]") {
         obj.show_settings = !obj.show_settings;
     }
 
-    // If settings are shown, draw the window and its controls
     if obj.show_settings {
         let window_rect = Rectangle::new(screen_pos.x + 70.0, screen_pos.y, 250.0, 220.0);
         obj.show_settings = !d.gui_window_box(window_rect, &format!("Settings: {}", obj.text));
 
-        // --- Controls within the window ---
         let base_x = window_rect.x + 10.0;
         let base_y = window_rect.y + 30.0;
 
-        // Text Box
-        if d.gui_text_box(
-            Rectangle::new(base_x, base_y, 230.0, 30.0),
-            &mut obj.text_buffer,
-            true,
-        ) {
-            obj.text = obj.text_buffer.clone();
-        }
+        // --- Text Box (FFI FIX) ---
+        // 1. Create a C-compatible byte buffer with a fixed capacity.
+        let mut buffer: Vec<u8> = obj.text_buffer.as_bytes().to_vec();
+        buffer.resize(TEXT_BUFFER_CAPACITY, 0); // Resize to capacity, filling with nulls.
+
+        // 2. Call the FFI function with a pointer to our buffer.
+        let bounds_rect = Rectangle::new(base_x, base_y, 230.0, 30.0);
+        let committed = unsafe {
+            raylib::ffi::GuiTextBox(
+                bounds_rect.into(),
+                buffer.as_mut_ptr() as *mut c_char,
+                buffer.len() as i32,
+                true, // editMode
+            )
+        };
+
+        // 3. Convert the (potentially modified) C buffer back to a safe Rust String.
+        let new_text = unsafe {
+            CStr::from_ptr(buffer.as_ptr() as *const c_char)
+                .to_string_lossy()
+                .into_owned()
+        };
+        obj.text_buffer = new_text;
+
+        // 4. Update the object's real text from the buffer.
+        // We do this every frame the box is active, so the label updates live.
+        obj.text = obj.text_buffer.clone();
 
         // Shape Toggle
         let shape_text = "Square;Circle;Triangle";

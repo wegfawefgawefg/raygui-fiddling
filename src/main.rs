@@ -8,7 +8,7 @@ const TIMESTEP: f32 = 1.0 / sketch::FRAMES_PER_SECOND as f32;
 
 fn main() {
     // --- Raylib and Window Initialization ---
-    let (mut rl, mut rlt) = raylib::init().title("raylib-rs-native-template").build();
+    let (mut rl, rlt) = raylib::init().title("raylib-rs Scene Tree").build();
     unsafe {
         SetTraceLogLevel(TraceLogLevel::LOG_WARNING as i32);
     }
@@ -17,11 +17,11 @@ fn main() {
     center_window(&mut rl, window_dims.x as i32, window_dims.y as i32);
 
     // --- State Initialization ---
-    // We must initialize the state *after* raylib so we can create the render texture.
-    let mut state = sketch::State::new(&mut rl, &rlt);
+    // The state now contains our scene objects and camera.
+    let mut state = sketch::State::new();
 
     // --- Main Game Loop ---
-    while state.running && !rl.window_should_close() {
+    while !rl.window_should_close() {
         // Process inputs from the user
         sketch::process_events_and_input(&mut rl, &mut state);
 
@@ -30,14 +30,15 @@ fn main() {
         state.time_since_last_update += dt;
         while state.time_since_last_update > TIMESTEP {
             state.time_since_last_update -= TIMESTEP;
-            sketch::step(&mut rl, &mut rlt, &mut state);
+            sketch::step(&mut state, TIMESTEP);
         }
 
         // --- Drawing Logic ---
         let mut draw_handle = rl.begin_drawing(&rlt);
+        draw_handle.clear_background(Color::from_hex("222222").unwrap());
 
-        // The main draw function now also needs the thread handle to manage texture modes.
-        sketch::draw(&mut state, &mut draw_handle, &rlt);
+        // The main draw function handles both world-space and screen-space rendering.
+        sketch::draw(&mut state, &mut draw_handle);
     }
 }
 

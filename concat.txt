@@ -1,0 +1,146 @@
+////// RAYGUI TEST
+========================================
+
+./src
+├── main.rs
+└── sketch.rs
+
+1 directory, 2 files
+
+///////////////////////////// src/main.rs
+use glam::UVec2;
+use raylib::prelude::*;
+use raylib::{ffi::SetTraceLogLevel, prelude::TraceLogLevel};
+
+mod sketch;
+
+const TIMESTEP: f32 = 1.0 / sketch::FRAMES_PER_SECOND as f32;
+
+fn main() {
+    // Initialize the game state and Raylib
+    let mut state = sketch::State::new();
+    let (mut rl, mut rlt) = raylib::init().title("raylib-rs-native-template").build();
+    unsafe {
+        SetTraceLogLevel(TraceLogLevel::LOG_WARNING as i32);
+    }
+
+    // --- Native Resolution Setup ---
+    // We only need one set of dimensions now.
+    let window_dims = UVec2::new(1280, 720);
+    let fullscreen = false;
+    rl.set_window_size(window_dims.x as i32, window_dims.y as i32);
+    if fullscreen {
+        rl.toggle_fullscreen();
+        // Adjust window size to the full screen dimensions if toggled
+        rl.set_window_size(rl.get_screen_width(), rl.get_screen_height());
+    }
+
+    // Center the window on the primary monitor.
+    // We call this *after* setting the size and fullscreen mode.
+    center_window(&mut rl, window_dims.x as i32, window_dims.y as i32);
+
+    // --- Main Game Loop ---
+    while state.running && !rl.window_should_close() {
+        // Process inputs from the user
+        sketch::process_events_and_input(&mut rl, &mut state);
+
+        // --- Fixed Timestep Update Logic ---
+        // This ensures the game logic runs at a consistent rate.
+        let dt = rl.get_frame_time();
+        state.time_since_last_update += dt;
+        while state.time_since_last_update > TIMESTEP {
+            state.time_since_last_update -= TIMESTEP;
+            sketch::step(&mut rl, &mut rlt, &mut state);
+        }
+
+        // --- Drawing Logic ---
+        // All drawing happens directly to the screen buffer now.
+        let mut draw_handle = rl.begin_drawing(&rlt);
+        draw_handle.clear_background(Color::BLACK);
+
+        // The sketch::draw function now receives the main draw handle.
+        // You may need to update its function signature in sketch.rs to accept &mut RaylibDrawHandle.
+        sketch::draw(&state, &mut draw_handle);
+    }
+}
+
+/// Centers the window on the current monitor.
+pub fn center_window(rl: &mut RaylibHandle, width: i32, height: i32) {
+    let monitor = get_current_monitor();
+    let monitor_width = get_monitor_width(monitor);
+    let monitor_height = get_monitor_height(monitor);
+    let monitor_pos = get_monitor_position(monitor);
+
+    // For debugging purposes, print which monitor is being used.
+    if let Ok(name) = get_monitor_name(monitor) {
+        println!(
+            "Centering on Monitor {}: '{}' ({}x{}) at ({}, {})",
+            monitor, name, monitor_width, monitor_height, monitor_pos.x, monitor_pos.y
+        );
+    }
+
+    // Calculate the centered position
+    let x = monitor_pos.x as i32 + (monitor_width - width) / 2;
+    let y = monitor_pos.y as i32 + (monitor_height - height) / 2;
+
+    // Set the new window position
+    rl.set_window_position(x, y);
+}
+
+
+///////////////////////////// src/sketch.rs
+use glam::Vec2;
+use raylib::prelude::*;
+
+pub const FRAMES_PER_SECOND: u32 = 60;
+
+pub struct State {
+    pub running: bool,
+    pub time_since_last_update: f32,
+}
+
+impl State {
+    pub fn new() -> Self {
+        Self {
+            running: true,
+            time_since_last_update: 0.0,
+        }
+    }
+}
+
+pub fn process_events_and_input(rl: &mut RaylibHandle, state: &mut State) {
+    if rl.is_key_pressed(raylib::consts::KeyboardKey::KEY_ESCAPE) {
+        state.running = false;
+    }
+}
+
+pub fn step(rl: &mut RaylibHandle, rlt: &mut RaylibThread, state: &mut State) {}
+
+pub fn draw(state: &State, d: &mut RaylibDrawHandle) {
+    d.draw_text("Low Res Sketch!", 12, 12, 12, Color::WHITE);
+    let mouse_pos = d.get_mouse_position();
+    d.draw_circle(mouse_pos.x as i32, mouse_pos.y as i32, 6.0, Color::GREEN);
+
+    let angle = d.get_time() as f32;
+
+    let center = Vec2::new(d.get_screen_width() as f32, d.get_screen_height() as f32) / 2.0;
+    let offset = center / 4.0;
+
+    for i in 0..3 {
+        let rot = glam::Mat2::from_angle(angle + i as f32 * 90.0);
+        let rect_pos_rotated = rot * offset + center;
+
+        let size =
+            (((d.get_time() as f32 + i as f32 * 1.0) * 2.0).sin() + 1.0) / 2.0 * offset.y + 4.0;
+        d.draw_rectangle(
+            rect_pos_rotated.x as i32,
+            rect_pos_rotated.y as i32,
+            size as i32,
+            size as i32,
+            Color::RED,
+        );
+    }
+}
+
+
+
